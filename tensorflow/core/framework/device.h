@@ -156,6 +156,19 @@ class Device : public DeviceBase {
     return OkStatus();
   }
 
+  virtual Status FillContextID(const Graph* graph,
+                               DeviceContextID* device_context_id) {
+    return OkStatus();
+  }
+
+  virtual Status FillMultiStreamResources(
+      const Graph* graph, DeviceContextID* device_context_id,
+      std::vector<std::pair<std::string, int>>& stream_wait_list,
+      std::unordered_map<std::string, std::set<std::pair<int, std::string>>>&
+          need_sync_node_deps) {
+    return OkStatus();
+  }
+
   // Returns the op segment of this device.  The caller can reuse op
   // kernels registered for the same session running on this device.
   OpSegment* op_segment() { return &op_seg_; }

@@ -913,6 +913,7 @@ class FunctionLibraryRuntime {
     absl::optional<ManagedStackTrace> stack_trace = absl::nullopt;
 
     std::function<void(std::function<void()>)>* runner = nullptr;
+    std::vector<std::function<void(std::function<void()>)>> nlp_runners;
 
     // Parameters for remote function execution.
     bool remote_execution = false;

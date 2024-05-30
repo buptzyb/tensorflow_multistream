@@ -39,6 +39,7 @@ from tensorflow.python.eager import context
 # pylint: enable=wildcard-import
 
 # Bring in subpackages.
+from tensorflow.python import cuda
 from tensorflow.python import data
 from tensorflow.python import distribute
 # from tensorflow.python import keras

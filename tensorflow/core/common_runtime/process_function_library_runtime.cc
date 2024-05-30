@@ -58,6 +58,7 @@ limitations under the License.
 #include "tensorflow/core/public/session_options.h"
 #include "tensorflow/core/util/device_name_utils.h"
 #include "tensorflow/core/util/dump_graph.h"
+#include "tensorflow/core/util/env_var.h"
 #include "tensorflow/core/util/reffed_status_callback.h"
 #include "tensorflow/tsl/platform/statusor.h"
 #if !defined(IS_MOBILE_PLATFORM)
@@ -923,6 +924,36 @@ Status ProcessFunctionLibraryRuntime::RunMultiDeviceSync(
       // runner
       thread::ThreadPool* pool = flr->device()->tensorflow_device_thread_pool();
       opts_copy.runner = (pool == nullptr) ? opts.runner : flr->runner();
+      static const bool node_level_multistream = [] {
+        bool node_level_multistream;
+        TF_CHECK_OK(ReadBoolFromEnvVar("TF_NODE_LEVEL_MULTISTREAM",
+                                       /*default_val=*/false,
+                                       &node_level_multistream));
+        return node_level_multistream;
+      }();
+      if (flr->device()->parsed_name().type == "GPU" &&
+          node_level_multistream) {
+        static const int64_t gpu_stream_group_count = [] {
+          int64_t gpu_stream_group_count;
+          TF_CHECK_OK(ReadInt64FromEnvVar("TF_GPU_STREAM_GROUP_COUNT",
+                                          /*default_val=*/1,
+                                          &gpu_stream_group_count));
+          return gpu_stream_group_count;
+        }();
+        for (int j = 0; j < gpu_stream_group_count; ++j) {
+          if (pool == nullptr) {
+            opts_copy.nlp_runners.push_back(*opts_copy.runner);
+          } else {
+            thread::ThreadPool* stream_thread_pool =
+                device_mgr_->LookupStream(flr->device(), j)
+                    ->tensorflow_device_thread_pool();
+            opts_copy.nlp_runners.push_back(
+                [stream_thread_pool](Executor::Args::Closure c) {
+                  stream_thread_pool->Schedule(std::move(c));
+                });
+          }
+        }
+      }
       VLOG(4) << "    with " << opts_copy.DebugString();
 
       std::vector<Tensor> comp_tensor_rets;
@@ -1048,6 +1079,36 @@ void ProcessFunctionLibraryRuntime::RunMultiDeviceAsync(
       // runner
       thread::ThreadPool* pool = flr->device()->tensorflow_device_thread_pool();
       opts_copy.runner = (pool == nullptr) ? opts.runner : flr->runner();
+      static const bool node_level_multistream = [] {
+        bool node_level_multistream;
+        TF_CHECK_OK(ReadBoolFromEnvVar("TF_NODE_LEVEL_MULTISTREAM",
+                                       /*default_val=*/false,
+                                       &node_level_multistream));
+        return node_level_multistream;
+      }();
+      if (flr->device()->parsed_name().type == "GPU" &&
+          node_level_multistream) {
+        static const int64_t gpu_stream_group_count = [] {
+          int64_t gpu_stream_group_count;
+          TF_CHECK_OK(ReadInt64FromEnvVar("TF_GPU_STREAM_GROUP_COUNT",
+                                          /*default_val=*/1,
+                                          &gpu_stream_group_count));
+          return gpu_stream_group_count;
+        }();
+        for (int j = 0; j < gpu_stream_group_count; ++j) {
+          if (pool == nullptr) {
+            opts_copy.nlp_runners.push_back(*opts_copy.runner);
+          } else {
+            thread::ThreadPool* stream_thread_pool =
+                device_mgr_->LookupStream(flr->device(), j)
+                    ->tensorflow_device_thread_pool();
+            opts_copy.nlp_runners.push_back(
+                [stream_thread_pool](Executor::Args::Closure c) {
+                  stream_thread_pool->Schedule(std::move(c));
+                });
+          }
+        }
+      }
 
       VLOG(1) << "Running component function on device " << target << " from "
               << data->function_name_ << " with handle " << comp_handle;
