@@ -477,12 +477,13 @@ class BFCAllocator : public Allocator {
 
   // Splits the chunk specified by 'h' into two chunks, one at least
   // of size 'num_bytes'.
-  void SplitChunk(ChunkHandle h, size_t num_bytes)
+  virtual void SplitChunk(ChunkHandle h, size_t num_bytes)
       TF_EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
   // Merges the two chunk handles.  Requires that the chunks are
   // contiguous in their allocation.
-  void Merge(ChunkHandle h, ChunkHandle h2) TF_EXCLUSIVE_LOCKS_REQUIRED(lock_);
+  virtual void Merge(ChunkHandle h, ChunkHandle h2)
+      TF_EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
   // Adds the chunk 'h' to the proper free bin.
   void InsertFreeChunkIntoBin(ChunkHandle h) TF_EXCLUSIVE_LOCKS_REQUIRED(lock_);
@@ -515,7 +516,7 @@ class BFCAllocator : public Allocator {
 
   void MarkFree(ChunkHandle h) TF_EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
-  ChunkHandle TryToCoalesce(ChunkHandle h, bool ignore_freed_at)
+  virtual ChunkHandle TryToCoalesce(ChunkHandle h, bool ignore_freed_at)
       TF_EXCLUSIVE_LOCKS_REQUIRED(lock_);
 
   // Fragmentation is calculated as the reverse ratio of the largest free chunk

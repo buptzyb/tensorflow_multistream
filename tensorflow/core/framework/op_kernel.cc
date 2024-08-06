@@ -1445,8 +1445,7 @@ Status FindKernelRegistration(
       VLOG(1) << "No device-specific kernels found for NodeDef '"
               << FormatNodeDefForError(node_name, has_experimental_debug_info,
                                        experimental_debug_info)
-              << "'"
-              << "Will fall back to a default kernel." << std::endl;
+              << "'" << "Will fall back to a default kernel." << std::endl;
     }
   }
 

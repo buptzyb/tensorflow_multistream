@@ -340,6 +340,7 @@ DirectSession::DirectSession(const SessionOptions& options,
                                   device_mgr->StreamGroupCount())
                             : nullptr) {
   int thread_pool_size = options_.config.session_inter_op_thread_pool_size();
+  bool stream_share_pool;
   if (node_level_multistream) {
     // The number of thread pool must match the number of stream group
     int64_t gpu_stream_group_count;
@@ -347,14 +348,27 @@ DirectSession::DirectSession(const SessionOptions& options,
                                                 /*default_val=*/1,
                                                 &gpu_stream_group_count));
     thread_pool_size = gpu_stream_group_count;
+    TF_CHECK_OK(tensorflow::ReadBoolFromEnvVar(
+        "TF_GPU_STREAM_SHARE_THREAD_POOL",
+        /*default_val=*/false, &stream_share_pool));
   }
   if (thread_pool_size > 0) {
     for (int i = 0; i < thread_pool_size; ++i) {
       thread::ThreadPool* pool = nullptr;
       bool owned = false;
       if (node_level_multistream) {
-        init_error_.Update(NewThreadPoolFromThreadPoolOptions(
-            options_, ThreadPoolOptionProto(), i, &pool, &owned));
+        if (stream_share_pool) {
+          if (i == 0) {
+            init_error_.Update(NewThreadPoolFromThreadPoolOptions(
+                options_, ThreadPoolOptionProto(), i, &pool, &owned));
+          } else {
+            pool = thread_pools_[0].first;
+            owned = false;
+          }
+        } else {
+          init_error_.Update(NewThreadPoolFromThreadPoolOptions(
+              options_, ThreadPoolOptionProto(), i, &pool, &owned));
+        }
       } else {
         init_error_.Update(NewThreadPoolFromThreadPoolOptions(
             options_, options_.config.session_inter_op_thread_pool(i), i, &pool,

@@ -40,10 +40,12 @@ struct AllocationAttributes {
   AllocationAttributes() = default;
 
   AllocationAttributes(bool retry_on_failure, bool allocation_will_be_logged,
-                       std::function<uint64()>* freed_by_func)
+                       std::function<uint64()>* freed_by_func,
+                       int stream_to_allocate = -1)
       : retry_on_failure(retry_on_failure),
         allocation_will_be_logged(allocation_will_be_logged),
-        freed_by_func(freed_by_func) {}
+        freed_by_func(freed_by_func),
+        stream_to_allocate(stream_to_allocate) {}
 
   // If the first attempt to allocate the memory fails, the allocation should
   // wait and retry (with a timeout).
@@ -62,6 +64,8 @@ struct AllocationAttributes {
   // a memory chunk whose freed_at_count is at this value or earlier may be
   // returned.
   std::function<uint64()>* freed_by_func = nullptr;  // Not owned.
+
+  int stream_to_allocate = -1;
 
   TF_DISALLOW_COPY_AND_ASSIGN(AllocationAttributes);
 };
