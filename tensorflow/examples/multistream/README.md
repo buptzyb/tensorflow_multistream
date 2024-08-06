@@ -31,6 +31,9 @@ In the design, we make all stream groups reuse the same set of model parameters 
 
 The multi-stream GPU allocators can also share the same memory limit to avoid an imbalanced memory footprint by setting `TF_GPU_STREAM_GROUP_SHARE_MEM_POOL=true`.
 
+Futhermore, we realize that sometimes memory consumption is critical in some cases. In those case, `TF_GPU_STREAM_AWARE_BFC=true` can be set to let multiple streams use a shared single BFC, to keep the memory consumption nearly the same as the vanilla BFC. However, there will be extra sync overhead between streams if memory is intensive.
+
+
 ## **Build Instruction**
 1. Recommended docker image:
   - tensorflow/build:2.13-python3.11
@@ -136,6 +139,8 @@ Sometimes the stream groups set via the Python API are not necessarily accurate,
 All nodes with regex matching `node_name_re1` or `node_name_re2` will be assigned to stream group 1. All nodes with regex matching `node_name_re3` or `node_name_re4` will be assigned to stream group 2.
 
 Set `TF_GPU_STREAM_GROUP_SHARE_MEM_POOL=true` to let the multi-stream GPU allocators share the same memory limit to address imbalanced memory footprint. This usually happens when there are a lot of operations on one stream, but only a few operations on the other stream. By default, this option is set to false, and the allocators will evenly divide the memory to use.
+
+Lastly, if you are in a memory intensive situation or wish multi-stream behave like single stream in memory consumption aspect, you can set `TF_GPU_STREAM_AWARE_BFC=true` to let multiple streams share a single BFC and space. Beaware that this may cause overhead if memory is intensive.
 
 ### **Multi-Stream Inference**
 
