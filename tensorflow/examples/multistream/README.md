@@ -140,7 +140,15 @@ All nodes with regex matching `node_name_re1` or `node_name_re2` will be assigne
 
 Set `TF_GPU_STREAM_GROUP_SHARE_MEM_POOL=true` to let the multi-stream GPU allocators share the same memory limit to address imbalanced memory footprint. This usually happens when there are a lot of operations on one stream, but only a few operations on the other stream. By default, this option is set to false, and the allocators will evenly divide the memory to use.
 
-Lastly, if you are in a memory intensive situation or wish multi-stream behave like single stream in memory consumption aspect, you can set `TF_GPU_STREAM_AWARE_BFC=true` to let multiple streams share a single BFC and space. Beaware that this may cause overhead if memory is intensive.
+Lastly, if you are in a memory intensive situation or wish multi-stream behave like single stream in memory consumption aspect, you can set `TF_GPU_STREAM_AWARE_BFC=true` to let multiple streams share a single BFC and space. Beaware that this may cause overhead if memory is intensive, as it needs to do stream sync with former stream when chunk is being used by a new different stream. And in design of stream aware BFC, we would like it to reduce these stream syncs as much as possible, thus it has a aggresive memory allocating behavior. An example, suppose your model runs on a 40GB gpu, vanilla BFC comsumes 32GB memory on single stream, stream aware BFC may aggessively comsumes 40GB memory on multi-stream, because it favors allocating new chunks rather than borrow existing chunks to reduce stream sync, if exising chunks are all on different streams. However, you can set:
+```
+ sess_config = tf.ConfigProto()
+ sess_config.gpu_options.per_process_gpu_memory_fraction = 32.0 / 40.0
+```
+to set a hard limit for BFC. Stream aware BFC should work under 32GB just fine, though some overhead may be added. In most cases, overhead should be negligible.
+
+Also there is a another env var `TF_BFC_EXTEND_LIMIT_MB` can be set to limit the max space size every time stream aware extends. By default, BFC is greedy and always double the space when extending, which may cause waste of space. Recommended env value is `2048` or `4096`. This env variable can help to control total space under stream aware BFC.
+
 
 ### **Multi-Stream Inference**
 
