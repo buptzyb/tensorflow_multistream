@@ -112,6 +112,8 @@ Operations outside of any scope will be assigned to the default TF stream group,
 
 **Alert!!!** If you're using eager mode, keep in mind that you need to do manual management of the tensors in the function that needs to be used across stream groups to ensure that the lifecycle of this tensor lasts until the end of step. See the `hold_tensors` comments in `multistream.py` for details. In non-eager mode (session-run style code), we already have support for automated tensor lifecycle management, so you don't need to worry about this. The eager mode automation is still under development.
 
+The XLA support for multiple streams training is still experimental and some usages are not supported. The nodes in a TF function graph cannot follow the stream assignment scope for the function itself, because the stream assignment cannot be pass into the function graph, so nodes will be executed on the default stream. Also, using "@tf.function(jit_compile=True)" will also lead to all the nodes inside the function be executed on the default stream.
+
 * Advanced settings.
 
 ```
