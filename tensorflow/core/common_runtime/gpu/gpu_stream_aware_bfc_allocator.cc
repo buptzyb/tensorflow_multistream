@@ -463,8 +463,8 @@ BFCAllocator::ChunkHandle GPUStreamAwareBFCAllocator::TryToCoalesce(
   if (c->next != kInvalidChunkHandle && !ChunkFromHandle(c->next)->in_use()) {
     Chunk* n = ChunkFromHandle(c->next);
     if ((n->freed_at_count == 0) || ignore_freed_at) {
-      if (chunk_prev_used_streams_[c->next] == chunk_prev_used_streams_[h]) {
-        // only on stream could merge. Maybe case fragment?
+      if (chunk_prev_used_streams_[c->next] != non_stream_id_) {
+        // if first chunk is non_stream, don't merge. Maybe cause fragment?
         // Through experiment, found that if can merge cross streams, then
         // easily a large non_stream chunk can be merged by previous chunk, and
         // next time allocation will not find this non_stream chunk, causing
@@ -480,8 +480,8 @@ BFCAllocator::ChunkHandle GPUStreamAwareBFCAllocator::TryToCoalesce(
   if (c->prev != kInvalidChunkHandle && !ChunkFromHandle(c->prev)->in_use()) {
     Chunk* n = ChunkFromHandle(c->prev);
     if ((n->freed_at_count == 0) || ignore_freed_at) {
-      if (chunk_prev_used_streams_[c->prev] == chunk_prev_used_streams_[h]) {
-        // only on stream could merge. Maybe case fragment?
+      if (chunk_prev_used_streams_[h] != non_stream_id_) {
+        // same logic as above
         VLOG(4) << "Merging c " << c->ptr << " into c->prev " << n->ptr;
         coalesced_chunk = c->prev;
         RemoveFreeChunkFromBin(c->prev);
