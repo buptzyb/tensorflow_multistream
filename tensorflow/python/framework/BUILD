@@ -1064,6 +1064,7 @@ py_library(
         "//tensorflow/python:control_flow_util",
         "//tensorflow/python:handle_data_util",
         "//tensorflow/python:tf2",
+        "//tensorflow/python/cuda",
         "//tensorflow/python/eager:context",
         "//tensorflow/python/eager:core",
         "//tensorflow/python/eager:monitoring",

@@ -86,6 +86,14 @@ namespace tensorflow {
 
 namespace {
 
+static const bool node_level_multistream = [] {
+  bool node_level_multistream;
+  TF_CHECK_OK(ReadBoolFromEnvVar("TF_NODE_LEVEL_MULTISTREAM",
+                                 /*default_val=*/false,
+                                 &node_level_multistream));
+  return node_level_multistream;
+}();
+
 auto* direct_session_runs = monitoring::Counter<0>::New(
     "/tensorflow/core/direct_session_runs",
     "The number of times DirectSession::Run() has been called.");
@@ -331,15 +339,41 @@ DirectSession::DirectSession(const SessionOptions& options,
                             ? absl::make_unique<StreamGroupMgr>(
                                   device_mgr->StreamGroupCount())
                             : nullptr) {
-  const int thread_pool_size =
-      options_.config.session_inter_op_thread_pool_size();
+  int thread_pool_size = options_.config.session_inter_op_thread_pool_size();
+  bool stream_share_pool;
+  if (node_level_multistream) {
+    // The number of thread pool must match the number of stream group
+    int64_t gpu_stream_group_count;
+    TF_CHECK_OK(tensorflow::ReadInt64FromEnvVar("TF_GPU_STREAM_GROUP_COUNT",
+                                                /*default_val=*/1,
+                                                &gpu_stream_group_count));
+    thread_pool_size = gpu_stream_group_count;
+    TF_CHECK_OK(tensorflow::ReadBoolFromEnvVar(
+        "TF_GPU_STREAM_SHARE_THREAD_POOL",
+        /*default_val=*/false, &stream_share_pool));
+  }
   if (thread_pool_size > 0) {
     for (int i = 0; i < thread_pool_size; ++i) {
       thread::ThreadPool* pool = nullptr;
       bool owned = false;
-      init_error_.Update(NewThreadPoolFromThreadPoolOptions(
-          options_, options_.config.session_inter_op_thread_pool(i), i, &pool,
-          &owned));
+      if (node_level_multistream) {
+        if (stream_share_pool) {
+          if (i == 0) {
+            init_error_.Update(NewThreadPoolFromThreadPoolOptions(
+                options_, ThreadPoolOptionProto(), i, &pool, &owned));
+          } else {
+            pool = thread_pools_[0].first;
+            owned = false;
+          }
+        } else {
+          init_error_.Update(NewThreadPoolFromThreadPoolOptions(
+              options_, ThreadPoolOptionProto(), i, &pool, &owned));
+        }
+      } else {
+        init_error_.Update(NewThreadPoolFromThreadPoolOptions(
+            options_, options_.config.session_inter_op_thread_pool(i), i, &pool,
+            &owned));
+      }
       thread_pools_.emplace_back(pool, owned);
     }
   } else if (options_.config.use_per_session_threads()) {
@@ -614,7 +648,7 @@ Status DirectSession::RunInternal(
     threadpool_wrapper = std::make_unique<thread::ThreadPool>(
         threadpool_options.inter_op_threadpool);
     pool = threadpool_wrapper.get();
-  } else if (stream_group_idx >= 0) {
+  } else if (!node_level_multistream && stream_group_idx >= 0) {
     pool = thread_pools_[stream_group_idx % thread_pools_.size()].first;
   } else {
     if (run_options.inter_op_thread_pool() < -1 ||
@@ -729,8 +763,8 @@ Status DirectSession::RunInternal(
   Status run_status;
 
   auto set_threadpool_args_for_item =
-      [&default_runner, &handler](const PerPartitionExecutorsAndLib& item,
-                                  Executor::Args* args) {
+      [this, &default_runner, &handler](const PerPartitionExecutorsAndLib& item,
+                                        Executor::Args* args) {
         // TODO(azaks): support partial run.
         // TODO(azaks): if the device picks its own threadpool, we need to
         // assign
@@ -750,6 +784,24 @@ Status DirectSession::RunInternal(
           args->user_intra_op_threadpool =
               handler->AsIntraThreadPoolInterface();
         }
+        if (node_level_multistream) {
+          for (int j = 0; j < thread_pools_.size(); ++j) {
+            auto pool = thread_pools_[j].first;
+            if (!device_thread_pool) {
+              args->nlp_runners.push_back([pool](Executor::Args::Closure c) {
+                pool->Schedule(std::move(c));
+              });
+            } else {
+              thread::ThreadPool* stream_thread_pool =
+                  device_mgr_->LookupStream(item.device, j)
+                      ->tensorflow_device_thread_pool();
+              args->nlp_runners.push_back(
+                  [stream_thread_pool](Executor::Args::Closure c) {
+                    stream_thread_pool->Schedule(std::move(c));
+                  });
+            }
+          }
+        }
       };
 
   if (can_execute_synchronously) {
@@ -757,7 +809,7 @@ Status DirectSession::RunInternal(
     args.rendezvous = &rendezvous;
 
     const auto& item =
-        stream_group_idx == -1 ||
+        stream_group_idx == -1 || node_level_multistream ||
                 executors_and_keys->stream_items[0].size() <= stream_group_idx
             ? executors_and_keys->items[0]
             : executors_and_keys->stream_items[0][stream_group_idx];
@@ -782,7 +834,7 @@ Status DirectSession::RunInternal(
 
     for (int i = 0; i < executors_and_keys->items.size(); ++i) {
       const auto& item =
-          stream_group_idx == -1 ||
+          stream_group_idx == -1 || node_level_multistream ||
                   executors_and_keys->stream_items[i].size() <= stream_group_idx
               ? executors_and_keys->items[i]
               : executors_and_keys->stream_items[i][stream_group_idx];
@@ -1387,7 +1439,8 @@ Status DirectSession::CreateExecutors(
   }
   ek->items.reserve(graphs.size());
   int stream_group_count = device_mgr_->StreamGroupCount();
-  bool use_multiple_executors = stream_group_count > 0;
+  bool use_multiple_executors =
+      stream_group_count > 0 && !node_level_multistream;
   if (use_multiple_executors) {
     ek->stream_items.reserve(graphs.size());
   }
