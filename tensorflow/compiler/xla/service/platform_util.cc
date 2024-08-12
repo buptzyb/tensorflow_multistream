@@ -163,8 +163,8 @@ static bool IsDeviceSupported(se::StreamExecutor* executor) {
 
 /* static */ StatusOr<std::vector<se::StreamExecutor*>>
 PlatformUtil::GetStreamExecutors(
-    se::Platform* platform, const std::optional<std::set<int>>& allowed_devices,
-    const int stream_id) {
+    se::Platform* platform,
+    const std::optional<std::set<int>>& allowed_devices) {
   int device_count = platform->VisibleDeviceCount();
   if (device_count <= 0) {
     return NotFound("no %s devices found", platform->Name());
@@ -184,13 +184,11 @@ PlatformUtil::GetStreamExecutors(
   {
     tsl::thread::ThreadPool thread_pool(tsl::Env::Default(),
                                         "device_initialization", device_count);
-    auto create_fn = [stream_id](
-                         se::Platform* platform,
-                         std::vector<se::StreamExecutor*>& stream_executors,
-                         int device_ordinal, int count) {
+    auto create_fn = [](se::Platform* platform,
+                        std::vector<se::StreamExecutor*>& stream_executors,
+                        int device_ordinal, int count) {
       VLOG(1) << "Started device init " << device_ordinal;
-      auto executor_status =
-          platform->ExecutorForDevice(device_ordinal, stream_id);
+      auto executor_status = platform->ExecutorForDevice(device_ordinal);
       if (executor_status.ok()) {
         se::StreamExecutor* executor = executor_status.value();
         if (IsDeviceSupported(executor)) {
@@ -199,7 +197,7 @@ PlatformUtil::GetStreamExecutors(
       } else {
         LOG(WARNING) << "unable to create StreamExecutor for "
                      << platform->Name() << ":" << device_ordinal << ": "
-                     << stream_id << ": " << executor_status.status().message();
+                     << executor_status.status().message();
       }
       VLOG(1) << "Finished device init " << device_ordinal;
     };

@@ -37,7 +37,6 @@ limitations under the License.
 #include "third_party/gpus/cuda/include/cuda_runtime_api.h"
 #include "third_party/gpus/cuda/include/driver_types.h"
 #include "tensorflow/compiler/xla/stream_executor/cuda/cuda_diagnostics.h"
-#include "tensorflow/compiler/xla/stream_executor/platform.h"
 #include "tensorflow/compiler/xla/stream_executor/platform/logging.h"
 #include "tensorflow/compiler/xla/stream_executor/platform/port.h"
 #include "tensorflow/tsl/platform/env.h"
@@ -289,10 +288,8 @@ static tsl::Status InternalInit() {
 
 /* static */ tsl::Status GpuDriver::GetDevice(int device_ordinal,
                                               CUdevice* device) {
-  RETURN_IF_CUDA_RES_ERROR(
-      cuDeviceGet(device,
-                  DeviceOrdinalHelper::DecodeDeviceFromOrdinal(device_ordinal)),
-      "Failed call to cuDeviceGet");
+  RETURN_IF_CUDA_RES_ERROR(cuDeviceGet(device, device_ordinal),
+                           "Failed call to cuDeviceGet");
   return ::tsl::OkStatus();
 }
 
@@ -333,8 +330,8 @@ bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
 }
 
 /* static */ tsl::Status GpuDriver::CreateContext(
-    int device_ordinal, CUdevice device, const DeviceOptions& device_options,
-    GpuContext** context) {
+    int device_ordinal, int stream_id, CUdevice device,
+    const DeviceOptions& device_options, GpuContext** context) {
   *context = nullptr;
 
   int flags = 0;
@@ -367,28 +364,26 @@ bool DeviceOptionsToContextFlags(const DeviceOptions& device_options,
   int64_t gpu_context_count;
   TF_CHECK_OK(tsl::ReadInt64FromEnvVar("TF_GPU_CONTEXT_COUNT",
                                        /*default_val=*/1, &gpu_context_count));
-  int stream_idx = DeviceOrdinalHelper::DecodeStreamFromOrdinal(device_ordinal);
-  int device_idx = DeviceOrdinalHelper::DecodeDeviceFromOrdinal(device_ordinal);
-  int context_idx = stream_idx % gpu_context_count;
-  if (CreatedContexts::OrdinalHas(device_idx, context_idx)) {
-    new_context = CreatedContexts::OrdinalGet(device_idx, context_idx);
-    VLOG(2) << "Device " << device << " stream " << stream_idx
+  int context_idx = stream_id % gpu_context_count;
+  if (CreatedContexts::OrdinalHas(device_ordinal, context_idx)) {
+    new_context = CreatedContexts::OrdinalGet(device_ordinal, context_idx);
+    VLOG(2) << "Device " << device << " stream " << stream_id
             << " use created context " << new_context;
-  } else if (stream_idx == 0 &&
+  } else if (stream_id == 0 &&
              primary_ctx_used_.find(new_context) == primary_ctx_used_.end()) {
     // Don't create new context. Use the primary context.
-    VLOG(2) << "No context for device " << device << " stream " << stream_idx
+    VLOG(2) << "No context for device " << device << " stream " << stream_id
             << ", use cuDevicePrimaryCtxRetain context " << new_context;
     primary_ctx_used_.insert(std::make_pair(new_context, device));
   } else {
     CHECK_EQ(CUDA_SUCCESS, cuCtxCreate(&new_context, flags, device));
-    VLOG(2) << "No context for device " << device << " stream " << stream_idx
+    VLOG(2) << "No context for device " << device << " stream " << stream_id
             << ", cuCtxCreate context " << new_context;
   }
   CHECK_EQ(CUDA_SUCCESS, cuCtxSetCurrent(former_context));
 
   if (res == CUDA_SUCCESS) {
-    *context = CreatedContexts::Add(new_context, device_idx, context_idx);
+    *context = CreatedContexts::Add(new_context, device_ordinal, context_idx);
     CHECK(*context != nullptr)
         << "success in this call must entail non-null result";
     VLOG(2) << "created or reused context " << new_context
@@ -1578,9 +1573,7 @@ tsl::StatusOr<int64_t> GpuDriver::GetMaxSharedMemoryPerBlockOptin(
 
 /* static */ bool GpuDriver::GetDeviceProperties(CUdevprop* device_properties,
                                                  int device_ordinal) {
-  CUresult res = cuDeviceGetProperties(
-      device_properties,
-      DeviceOrdinalHelper::DecodeDeviceFromOrdinal(device_ordinal));
+  CUresult res = cuDeviceGetProperties(device_properties, device_ordinal);
   if (res != CUDA_SUCCESS) {
     LOG(ERROR) << "failed to query device properties: " << ToString(res);
     return false;

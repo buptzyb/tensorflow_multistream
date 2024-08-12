@@ -292,7 +292,7 @@ class DeviceBase {
   void SetStreamId(int stream_id) { stream_id_ = stream_id; }
 
   // Gets the stream index of a stream device.
-  int GetStreamId() { return stream_id_; }
+  int GetStreamId() const { return stream_id_; }
 
  protected:
   // Does not take ownership.

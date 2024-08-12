@@ -175,16 +175,16 @@ tsl::StatusOr<StreamExecutor*> CudaPlatform::GetExecutor(
 tsl::StatusOr<std::unique_ptr<StreamExecutor>>
 CudaPlatform::GetUncachedExecutor(const StreamExecutorConfig& config) {
   auto executor = std::make_unique<StreamExecutor>(
-      this, std::make_unique<GpuExecutor>(config.plugin_config),
-      DeviceOrdinalHelper::EncodeDeviceOrdinal(config.stream_id,
-                                               config.ordinal));
+      this, std::make_unique<GpuExecutor>(config.plugin_config), config.ordinal,
+      config.stream_id);
   auto init_status = executor->Init(config.device_options);
   if (!init_status.ok()) {
     return tsl::Status(
         absl::StatusCode::kInternal,
-        absl::StrFormat(
-            "failed initializing StreamExecutor for CUDA device ordinal %d: %s",
-            config.ordinal, init_status.ToString()));
+        absl::StrFormat("failed initializing StreamExecutor for CUDA device "
+                        "ordinal %d stream group %d: %s",
+                        config.ordinal, config.stream_id,
+                        init_status.ToString()));
   }
 
   return std::move(executor);
