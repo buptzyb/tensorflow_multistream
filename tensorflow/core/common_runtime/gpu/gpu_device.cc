@@ -36,6 +36,7 @@ limitations under the License.
 
 #include "absl/container/flat_hash_set.h"
 #include "absl/strings/str_split.h"
+#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #include "tensorflow/compiler/xla/stream_executor/device_id_utils.h"
 #include "tensorflow/compiler/xla/stream_executor/gpu/gpu_init.h"
 #include "tensorflow/core/common_runtime/device/device_event_mgr.h"
@@ -62,10 +63,9 @@ limitations under the License.
 #include "tensorflow/core/lib/strings/strcat.h"
 #include "tensorflow/tsl/framework/device_id.h"
 #include "tensorflow/tsl/framework/device_id_utils.h"
-#include "third_party/eigen3/unsupported/Eigen/CXX11/Tensor"
 #if GOOGLE_CUDA
-#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_activation.h"
 #include "third_party/gpus/cudnn/cudnn.h"
+#include "tensorflow/compiler/xla/stream_executor/cuda/cuda_activation.h"
 #elif TENSORFLOW_USE_ROCM
 #include "tensorflow/core/platform/rocm.h"
 #endif
@@ -81,7 +81,6 @@ limitations under the License.
 #include "tensorflow/core/platform/types.h"
 #include "tensorflow/core/profiler/lib/scoped_annotation.h"
 #include "tensorflow/core/profiler/lib/scoped_memory_debug_annotation.h"
-#include "tensorflow/core/profiler/nvtx_utils.h"
 #include "tensorflow/core/public/session_options.h"
 #include "tensorflow/core/util/device_name_utils.h"
 #include "tensorflow/core/util/env_var.h"
@@ -738,9 +737,6 @@ void BaseGPUDevice::LogOutputs(OpKernel* op_kernel, OpKernelContext* context) {
 void BaseGPUDevice::WaitOnStream(OpKernel* op_kernel, OpKernelContext* context,
                                  se::Stream* stream, const int stream_id,
                                  const bool vlog_1) {
-  tensorflow::nvtx::ScopedRangeIfEnabled<tensorflow::nvtx::CoreDomain>
-      nvtx_range("WaitOnStream", [&]() { return "WaitOnStream"; });
-
   // If this op's device context is different from the other contexts,
   // we must wait on the stream.
   if (context->num_inputs() != op_kernel->num_inputs()) {
@@ -1896,7 +1892,7 @@ Status BaseGPUDeviceFactory::CreateGPUDevice(
     if (use_stream_aware_bfc) {
       process_state->GetGPUStreamAwareAllocators(
           options.config.gpu_options(), tf_device_id, memory_limit,
-          peer_gpu_ids, stream_group_count, gpu_allocators);
+          peer_gpu_ids, num_streams, gpu_allocators);
     }
   } else {
     gpu_allocators.push_back(process_state->GetGPUAllocator(
@@ -1919,8 +1915,8 @@ Status BaseGPUDeviceFactory::CreateGPUDevice(
     // memory limit represented by 'stats.bytes_limit' used by that allocator
     // may be different (which should be an error).
     //
-    // TODO(laigd): report error if memory_limit doesn't match(bytes_limit >>
-    // 20) << " MB memory: " << " -> stats->bytes_limit.
+    // TODO(laigd): report error if memory_limit doesn't match
+    // stats->bytes_limit.
     int64_t bytes_limit = stats->bytes_limit ? *stats->bytes_limit : 0;
     const string stream_name = strings::StrCat(
         name_prefix, "/device:STREAM_GPU_", tf_device_id.value(), ":", i);
@@ -1945,6 +1941,7 @@ Status BaseGPUDeviceFactory::CreateGPUDevice(
     }
     devices->push_back(std::move(gpu_device));
   }
+
   return OkStatus();
 }
 
@@ -2248,8 +2245,9 @@ Status BaseGPUDeviceFactory::GetValidDeviceIds(
 #elif TENSORFLOW_USE_ROCM
     std::string gcn_arch_name =
         description->rocm_compute_capability().gcn_arch_name();
-    VLOG(1) << "Found device " << i << " with properties: " << "\npciBusID: "
-            << description->pci_bus_id() << " name: " << description->name()
+    VLOG(1) << "Found device " << i << " with properties: "
+            << "\npciBusID: " << description->pci_bus_id()
+            << " name: " << description->name()
             << "     ROCm AMDGPU Arch: " << gcn_arch_name
             << "\ncoreClock: " << description->clock_rate_ghz() << "GHz"
             << " coreCount: " << description->core_count()
@@ -2307,8 +2305,9 @@ Status BaseGPUDeviceFactory::GetValidDeviceIds(
     // Only GPUs with no less than the minimum supported compute capability is
     // accepted.
     if (desc->cuda_compute_capability() < min_supported_capability) {
-      LOG(INFO) << "Ignoring visible gpu device " << "("
-                << GetShortDeviceDescription(visible_gpu_id, *desc) << ") "
+      LOG(INFO) << "Ignoring visible gpu device "
+                << "(" << GetShortDeviceDescription(visible_gpu_id, *desc)
+                << ") "
                 << "with Cuda compute capability "
                 << desc->cuda_compute_capability().ToString()
                 << ". The minimum required Cuda capability is "
@@ -2319,8 +2318,9 @@ Status BaseGPUDeviceFactory::GetValidDeviceIds(
     // Only GPUs with supported gfx versions are accepted.
     auto rocm_compute_capability = desc->rocm_compute_capability();
     if (!rocm_compute_capability.is_supported_gfx_version()) {
-      LOG(INFO) << "Ignoring visible gpu device " << "("
-                << GetShortDeviceDescription(visible_gpu_id, *desc) << ") "
+      LOG(INFO) << "Ignoring visible gpu device "
+                << "(" << GetShortDeviceDescription(visible_gpu_id, *desc)
+                << ") "
                 << "with AMDGPU version : "
                 << rocm_compute_capability.gfx_version()
                 << ". The supported AMDGPU versions are "
@@ -2334,8 +2334,9 @@ Status BaseGPUDeviceFactory::GetValidDeviceIds(
     // multiprocessors. If the TF_MIN_GPU_MULTIPROCESSOR_COUNT environment
     // variable is set, its value will be used to filter out GPUs.
     if (desc->core_count() < min_gpu_core_count) {
-      LOG(INFO) << "Ignoring visible gpu device " << "("
-                << GetShortDeviceDescription(visible_gpu_id, *desc) << ") "
+      LOG(INFO) << "Ignoring visible gpu device "
+                << "(" << GetShortDeviceDescription(visible_gpu_id, *desc)
+                << ") "
                 << "with core count: " << desc->core_count()
                 << ". The minimum required count is " << min_gpu_core_count
                 << ". You can adjust this requirement with the env var "

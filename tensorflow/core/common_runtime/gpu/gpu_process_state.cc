@@ -24,13 +24,13 @@ limitations under the License.
 #include "tensorflow/compiler/xla/stream_executor/device_mem_allocator.h"
 #include "tensorflow/compiler/xla/stream_executor/gpu/gpu_cudamallocasync_allocator.h"
 #include "tensorflow/compiler/xla/stream_executor/gpu/gpu_init.h"
-#include "tensorflow/core/common_runtime/gpu/gpu_stream_aware_bfc_allocator.h"
 #include "tensorflow/compiler/xla/stream_executor/stream_executor.h"
 #include "tensorflow/core/common_runtime/device/device_host_allocator.h"
 #include "tensorflow/core/common_runtime/gpu/gpu_bfc_allocator.h"
 #include "tensorflow/core/common_runtime/gpu/gpu_cudamalloc_allocator.h"
 #include "tensorflow/core/common_runtime/gpu/gpu_debug_allocator.h"
 #include "tensorflow/core/common_runtime/gpu/gpu_id_manager.h"
+#include "tensorflow/core/common_runtime/gpu/gpu_stream_aware_bfc_allocator.h"
 #include "tensorflow/core/common_runtime/gpu/gpu_virtual_mem_allocator.h"
 #include "tensorflow/core/common_runtime/pool_allocator.h"
 #include "tensorflow/core/common_runtime/shared_counter.h"
@@ -517,8 +517,8 @@ Allocator* GPUProcessState::GetGPUStreamAwareAllocator(
     (defined(TENSORFLOW_USE_ROCM) && TENSORFLOW_USE_ROCM)
   const string& allocator_type = options.allocator_type();
   mutex_lock lock(mu_);
-  DeviceIdUtil::CheckValidTfDeviceId(DEVICE_GPU, GPUMachineManager(),
-                                     tf_device_id);
+  tsl::CheckValidTfDeviceId(
+      DEVICE_GPU, se::GPUMachineManager()->VisibleDeviceCount(), tf_device_id);
 
   if (tf_device_id.value() >=
       static_cast<int64_t>(gpu_stream_aware_allocators_.size())) {

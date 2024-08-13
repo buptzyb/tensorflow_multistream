@@ -3,13 +3,15 @@
 ## **Introduction**
 Multiple Stream TensorFlow is developed based on the official [TensorFlow](https://github.com/tensorflow/tensorflow). It leverages the features of modern GPUs to accelerate deep learning training and inference. This Multi-Stream implementation has successfully helped several customers migrate their TF models to the GPU and go online.
 
-Please reach out to <robinz@nvidia.com> and <ruotongw@nvidia.com> for technical supports, thanks!
+See our talk at GTC2024: **"Accelerate Recommender Systems and Increase GPU Utilization With Multiple CUDA Streams"** ([Link](https://www.nvidia.com/en-us/on-demand/session/gtc24-s61278/)), and our talk at NVIDIA AI Open Day 2024 Summer (in Chinese, [Link](https://www.bilibili.com/video/BV1Py411q7Ym/)).
+
+See the last section for code migration guidelines. Please reach out to <robinz@nvidia.com> and <ruotongw@nvidia.com> for technical support, thanks!
 
 ## **Key Features**
 
 1. Multiple Streams Inference
 
-The user can specify how many stream groups to create for each GPU. each time the session.run() function is called, TF will schedule the most suitable stream group to execute. To reduce inter-stream dependencies at high concurrency, we also support different CUDA contexts for the stream groups. Eager mode (no explicit session) is not supported yet.
+The user can specify how many stream groups to create for each GPU. Each time the session.run() function is called, TF will schedule the most suitable stream group to execute. To reduce inter-stream dependencies at high concurrency, we also support different CUDA contexts for the stream groups. Eager mode (no explicit session) is not supported yet.
 
 2. Multiple Streams Training
 
@@ -31,17 +33,32 @@ In the design, we make all stream groups reuse the same set of model parameters 
 
 The multi-stream GPU allocators can also share the same memory limit to avoid an imbalanced memory footprint by setting `TF_GPU_STREAM_GROUP_SHARE_MEM_POOL=true`.
 
-Futhermore, we realize that sometimes memory consumption is critical in some cases. In those case, `TF_GPU_STREAM_AWARE_BFC=true` can be set to let multiple streams use a shared single BFC, to keep the memory consumption nearly the same as the vanilla BFC. However, there will be extra sync overhead between streams if memory is intensive.
+Furthermore, we realize that sometimes memory consumption is critical in some cases. In those cases, `TF_GPU_STREAM_AWARE_BFC=true` can be set to let multiple streams use a shared single BFC allocator, to keep the memory consumption nearly the same as the vanilla BFC. However, there will be extra synchronization overhead between streams if memory is intensive.
 
+## **Requirements**
+
+Minimum CUDA Driver version: r465. Recommended CUDA Driver version: r525 or above.
+
+Recommended CUDA Toolkit version: CUDA12.4 or above.
+
+If you have customized operations in your system, please check whether your code follows the important TensorFlow and CUDA best practice: **DO NOT INVOLVE ANY CPU-GPU SYNCHRONIZATION IF NOT HAVE TO**. The synchronizations not only can result in large unnecessary CPU side overhead and be a blocker for multiple streams to take their best effort, but also can lead to deadlock in some cases especially when NCCL operations are involved. Here are the guidelines you should follow:
+
+1. Avoid using `cudaDeviceSynchronize()` API in your customized op.
+
+2. Avoid using APIs that cause implicit device synchronization, such as `cudaFree()`, `cudaMemcpy()`, `cudaMemset()`. Use the asynchronized version `cudaFreeAsync()`, `cudaMemcpyAsync()`, `cudaMemsetAsync()` instead.
+
+3. Avoid using pageable memory HtoD/DtoH copy to transfer a large chunk of data. It's slow and will make the CPU thread wait until the data transfer is finished. Use pinned memory transfer instead.
+
+4. Using `cudaStreamSynchronize()` is not that bad, but still not recommended. Because this API blocks the calling CPU thread. You can learn TensorFlow's practice that uses `cudaEventRecord()` + `cudaEventQuery()` to judge the stream status, and uses `cudaEventRecord()` + `cudaStreamWaitEvent()` to build the cross-stream dependency.
 
 ## **Build Instruction**
 1. Recommended docker image:
-  - tensorflow/build:2.13-python3.11
+ - tensorflow/build:2.13-python3.11
 
 2. Configure TF
 
 * Run ./configure
-  - The generated .tf\_configure.bazelrc example:
+ - The generated .tf\_configure.bazelrc example:
 
 ```
 build --action_env PYTHON_BIN_PATH="/usr/bin/python3"
@@ -108,11 +125,11 @@ with tf.cuda.stream_scope(tf.cuda.get_stream(2), include_grad=True):
  out = ...
 ```
 
-Operations outside of any scope will be assigned to the default TF stream group, same as using `with tf.cuda.stream_scope(tf.cuda.get_stream(0))`.
+Operations outside of any scope will be assigned to the default TF stream group, the same as using `with tf.cuda.stream_scope(tf.cuda.get_stream(0))`.
 
-**Alert!!!** If you're using eager mode, keep in mind that you need to do manual management of the tensors in the function that needs to be used across stream groups to ensure that the lifecycle of this tensor lasts until the end of step. See the `hold_tensors` comments in `multistream.py` for details. In non-eager mode (session-run style code), we already have support for automated tensor lifecycle management, so you don't need to worry about this. The eager mode automation is still under development.
+**Alert!!!** If you're using eager mode, keep in mind that you need to do manual management of the tensors in the function that needs to be used across stream groups to ensure that the lifecycle of this tensor lasts until the end of the step. See the `hold_tensors` comments in `multistream.py` for details. In non-eager mode (session-run style code), we already have support for automated tensor lifecycle management, so you don't need to worry about this. The eager mode automation is still under development.
 
-The XLA support for multiple streams training is still experimental and some usages are not supported. The nodes in a TF function graph cannot follow the stream assignment scope for the function itself, because the stream assignment cannot be pass into the function graph, so nodes will be executed on the default stream. Also, using "@tf.function(jit_compile=True)" will also lead to all the nodes inside the function be executed on the default stream.
+The XLA support for multiple streams training is still experimental and some usages are not supported. The nodes in a TF function graph cannot follow the stream assignment scope for the function itself, because the stream assignment cannot be passed into the function graph, so nodes will be executed on the default stream. Also, using "@tf.function(jit_compile=True)" will lead to all the nodes inside the function being executed on the default stream.
 
 * Advanced settings.
 
@@ -142,15 +159,16 @@ All nodes with regex matching `node_name_re1` or `node_name_re2` will be assigne
 
 Set `TF_GPU_STREAM_GROUP_SHARE_MEM_POOL=true` to let the multi-stream GPU allocators share the same memory limit to address imbalanced memory footprint. This usually happens when there are a lot of operations on one stream, but only a few operations on the other stream. By default, this option is set to false, and the allocators will evenly divide the memory to use.
 
-Lastly, if you are in a memory intensive situation or wish multi-stream behave like single stream in memory consumption aspect, you can set `TF_GPU_STREAM_AWARE_BFC=true` to let multiple streams share a single BFC and space. Beaware that this may cause overhead if memory is intensive, as it needs to do stream sync with former stream when chunk is being used by a new different stream. And in design of stream aware BFC, we would like it to reduce these stream syncs as much as possible, thus it has a aggresive memory allocating behavior. An example, suppose your model runs on a 40GB gpu, vanilla BFC comsumes 32GB memory on single stream, stream aware BFC may aggessively comsumes 40GB memory on multi-stream, because it favors allocating new chunks rather than borrow existing chunks to reduce stream sync, if exising chunks are all on different streams. However, you can set:
+Lastly, if you are in a memory-intensive situation or wish multiple streams behave like a single stream in the memory consumption aspect, you can set `TF_GPU_STREAM_AWARE_BFC=true` to let multiple streams share a single BFC allocator and thus memory space. Be aware that this may cause overhead if memory is intensive, as it needs to do stream synchronization with the former stream when the memory chunk is being used by a new different stream. And in the design of stream-aware BFC, we would like it to reduce these stream syncs as much as possible, thus it has an aggressive memory-allocating behavior. For example, suppose your model runs on a 40GB GPU, vanilla BFC consumes 32GB memory on a single stream, while stream-aware BFC may aggressively consume 40GB memory on multiple streams, because it favors allocating new chunks rather than borrowing existing chunks to reduce stream synchronization, if existing chunks are all on different streams. However, you can set:
+
 ```
  sess_config = tf.ConfigProto()
  sess_config.gpu_options.per_process_gpu_memory_fraction = 32.0 / 40.0
 ```
-to set a hard limit for BFC. Stream aware BFC should work under 32GB just fine, though some overhead may be added. In most cases, overhead should be negligible.
 
-Also there is a another env var `TF_BFC_EXTEND_LIMIT_MB` can be set to limit the max space size every time stream aware extends. By default, BFC is greedy and always double the space when extending, which may cause waste of space. Recommended env value is `2048` or `4096`. This env variable can help to control total space under stream aware BFC.
+to set a hard limit for BFC. Stream-aware BFC should work under 32GB just fine, though some overhead may be added. In most cases, overhead should be negligible.
 
+Also, there is another environment variable `TF_BFC_EXTEND_LIMIT_MB` can be set to limit the max memory space size every time stream aware extends. By default, BFC is greedy and always doubles the space when extending, which may cause a waste of space. The recommended env value is `2048` or `4096`. This can help to control total space under stream-aware BFC.
 
 ### **Multi-Stream Inference**
 
@@ -188,7 +206,7 @@ echo quit | nvidia-cuda-mps-control
 
 Set `TF_GPU_STREAM_MERGE=true` to merge the compute stream, H2D copy stream, and D2H copy stream in one stream group into one stream.
 
-Set `TF_GPU_CONTEXT_COUNT=N` to create the N stream groups in N CUDA contexts to reduce CPU-side contention for the context lock. Enabling MPS by `nvidia-cuda-mps-control -d` is needed if multi-context is used. Performance gain is not guaranteed as MPS brings extra overheads.
+Set `TF_GPU_CONTEXT_COUNT=N` to create the N stream groups in N CUDA contexts to reduce CPU-side contention for the context lock. Enabling MPS by `nvidia-cuda-mps-control -d` is needed if multi-context is used. The performance gain is not guaranteed as MPS brings extra overheads.
 
 Set `TF_PER_STREAM_HOST_ALLOCATOR=true` to create an exclusive GPU host allocator for every stream group to reduce the allocator contention overhead.
 
@@ -199,3 +217,23 @@ In the config_proto file, if you create multiple `session_inter_op_thread_pool`,
 Set `TF_GPU_THREAD_MODE=gpu_private` and `TF_GPU_THREAD_COUNT=N` to use `N` additional threads for every stream group to execute GPU ops, instead of using the threads from the above session thread pool. Set `TF_GPU_THREAD_MODE=gpu_shared` to let all the stream groups share `N` additional threads.
 
 See the **Best Practice** section in the [document](https://docs.google.com/document/d/1yL3lWk_iFKqLTyekkuaiKXZ78I0lPmD5kM1fghHRs4Y/edit?usp=sharing) for more information.
+
+## **Migration Instruction**
+
+You may need to migrate the multiple streams functionality to your own version of TensorFlow. Here are some considerations for migration.
+
+Besides the examples and README commit, our multi-stream implementation consists of four commits:
+
+1. stream merging
+
+2. multiple streams for inference
+
+3. multiple streams for training
+
+4. stream-aware BFC allocator
+
+If you need multiple streams for the inference system, migrating the second commit should be sufficient to enable the feature. But the first commit is also worth trying as it can help reduce the stream-switching overhead in one stream group, which can be the main overhead if you have a lot of small HtoD/DtoH data transfers or if you are using an old version of CUDA driver (older than r515).
+
+If you need multiple streams for the training system, you have to migrate all the first three commits. There is a new class called `TensorHolder` in the first commit, and it will be used in the third commit. You can just migrate this class and its object in the OpKernel params if you don't want to migrate the whole first commit.
+
+The fourth commit implements a new allocator that helps reduce the GPU memory consumption. If the GPU goes OOM after enabling multiple streams and using the environment variable `TF_SEGMENT_OWN_CONST=true` cannot help, this commit can help you reduce the memory usage to the same level as with single streams, but may also bring some synchronization overhead.

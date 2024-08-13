@@ -60,11 +60,6 @@ class GPUStreamAwareBFCAllocator : public BFCAllocator {
   bool Extend(size_t alignment, size_t rounded_bytes)
       TF_EXCLUSIVE_LOCKS_REQUIRED(lock_) override;
 
-  virtual void DumpMemoryLog(size_t num_bytes)
-      TF_EXCLUSIVE_LOCKS_REQUIRED(lock_) override;
-
-  void DumpSummaryMemoryLog() TF_EXCLUSIVE_LOCKS_REQUIRED(lock_);
-
   TF_DISALLOW_COPY_AND_ASSIGN(GPUStreamAwareBFCAllocator);
 
   std::vector<int> chunk_prev_used_streams_;

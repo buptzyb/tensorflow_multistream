@@ -76,7 +76,7 @@ BFCAllocator::BFCAllocator(std::unique_ptr<SubAllocator> sub_allocator,
   // We create bins to fit all possible ranges that cover the
   // memory_limit_ starting from allocations up to 256 bytes to
   // allocations up to (and including) the memory limit.
-  VLOG(0) << "Creating new BFCAllocator named: " << name;
+  VLOG(1) << "Creating new BFCAllocator named: " << name;
   for (BinNum b = 0; b < kNumBins; b++) {
     size_t bin_size = BinNumToSize(b);
     VLOG(1) << "Creating bin of max chunk size "
@@ -733,6 +733,7 @@ void BFCAllocator::DeallocateRawInternal(void* ptr) {
   int64_t alloc_bytes = chunk->size;
 
   MarkFree(h);
+
   // Consider coalescing it.
   if (timing_counter_) {
     InsertFreeChunkIntoBin(h);

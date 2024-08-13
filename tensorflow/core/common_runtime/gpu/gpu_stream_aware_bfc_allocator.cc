@@ -21,7 +21,6 @@
 #include "tensorflow/tsl/stacktrace.h"
 #endif
 #include "tensorflow/core/profiler/lib/scoped_memory_debug_annotation.h"
-#include "tensorflow/core/profiler/nvtx_utils.h"
 #include "tensorflow/core/protobuf/bfc_memory_map.pb.h"
 #include "tensorflow/tsl/profiler/lib/traceme.h"
 
@@ -72,11 +71,6 @@ void* GPUStreamAwareBFCAllocator::AllocateRaw(
     size_t unused_alignment, size_t num_bytes,
     const AllocationAttributes& allocation_attr) {
   VLOG(3) << "AllocateRaw " << Name() << "  " << num_bytes;
-  tensorflow::nvtx::ScopedRangeIfEnabled<tensorflow::nvtx::MemAllocDomain>
-      nvtx_range(Name() + " AllocateRaw", [&]() {
-        return Name() + " AllocateRaw(): " + std::to_string(num_bytes) +
-               " bytes";
-      });
   void* result = [&] {
     if (!opts_.allow_retry_on_failure || !allocation_attr.retry_on_failure) {
       // If we have globally disabled retry-on-failure and fail to allocate an
@@ -249,7 +243,8 @@ void* GPUStreamAwareBFCAllocator::AllocateRawInternal(size_t unused_alignment,
     LOG(WARNING)
         << "Allocator (" << Name() << ") ran out of memory trying "
         << "to allocate " << strings::HumanReadableNumBytes(num_bytes)
-        << " (rounded to " << rounded_bytes << ")" << "requested by op "
+        << " (rounded to " << rounded_bytes << ")"
+        << "requested by op "
         << tensorflow::profiler::ScopedMemoryDebugAnnotation::
                CurrentAnnotation()
                    .pending_op_name
@@ -363,13 +358,6 @@ void* GPUStreamAwareBFCAllocator::FindChunkPtr(
 #endif
 
         if (need_sync) {
-          tensorflow::nvtx::ScopedRangeIfEnabled<
-              tensorflow::nvtx::MemAllocDomain>
-              nvtx_range(Name() + " ThenWaitFor", [&]() {
-                return Name() + " FindChunkPtr ThenWaitFor: " +
-                       std::to_string(stream_to_allocate) + " wait " +
-                       std::to_string(prev_used_stream);
-              });
           compute_streams_[stream_to_allocate]->ThenWaitFor(
               compute_streams_[prev_used_stream]);
         }
@@ -531,11 +519,6 @@ void GPUStreamAwareBFCAllocator::Merge(BFCAllocator::ChunkHandle h1,
             << ", chunk 2 size: " << c2->size
             << ", stream: " << chunk_prev_used_streams_[h2];
   if (stream_1 >= 0 && stream_2 >= 0 && stream_1 != stream_2) {
-    tensorflow::nvtx::ScopedRangeIfEnabled<tensorflow::nvtx::MemAllocDomain>
-        nvtx_range(Name() + " ThenWaitFor", [&]() {
-          return Name() + "Merge ThenWaitFor: " + std::to_string(stream_1) +
-                 " wait " + std::to_string(stream_2);
-        });
     compute_streams_[stream_1]->ThenWaitFor(compute_streams_[stream_2]);
   }
   DeleteChunk(h2);
@@ -690,50 +673,6 @@ bool GPUStreamAwareBFCAllocator::Extend(size_t alignment,
   InsertFreeChunkIntoBin(TryToCoalesce(h, /*ignore_freed_at=*/false));
 
   return true;
-}
-
-void GPUStreamAwareBFCAllocator::DumpMemoryLog(size_t num_bytes) {
-  if (bfc_custom_log) {
-    pthread_t thread_id = pthread_self();
-
-    size_t freeMem, totalMem;
-    CUDA_CHECK(cudaMemGetInfo(&freeMem, &totalMem));
-
-    VLOG(0) << "GPU freeMem: " << freeMem / float(1024) / 1024 / 1024
-            << " GB, totalMem: " << totalMem / float(1024) / 1024 / 1024
-            << " GB";
-
-    VLOG(0) << "Default Pool for async allocators info:";
-    int device_id;
-    CUDA_CHECK(cudaGetDevice(&device_id));
-    cudaMemPool_t defaultPool;
-    // Get the default memory pool
-    CUDA_CHECK(cudaDeviceGetDefaultMemPool(&defaultPool, device_id));
-    int64_t release_threshold, reserved_mem_current, reserved_mem_high,
-        used_mem_current, used_mem_high;
-    CUDA_CHECK(cudaMemPoolGetAttribute(
-        defaultPool, cudaMemPoolAttrReleaseThreshold, &release_threshold));
-
-    VLOG(0) << "release_threshold: "
-            << release_threshold / float(1024) / 1024 / 1024 << " GB, "
-            << "reserved_mem_current: "
-            << reserved_mem_current / float(1024) / 1024 / 1024 << " GB, "
-            << "reserved_mem_high: "
-            << reserved_mem_high / float(1024) / 1024 / 1024 << " GB, "
-            << "used_mem_current: "
-            << used_mem_current / float(1024) / 1024 / 1024 << " GB, "
-            << "used_mem_high: " << used_mem_high / float(1024) / 1024 / 1024
-            << " GB";
-
-    VLOG(0) << "gpu bfcs num: " << GPUBFCAllocator::gpu_bfc_allocators_.size()
-            << ", from " << Name() << ", tid: " << thread_id;
-    // It's almost the same as BFCAllocator::DumpMemoryLog, but to log all GPU
-    // BFCs stats instead of just logging the OOMed one.
-    for (GPUBFCAllocator* gpu_bfc : GPUBFCAllocator::gpu_bfc_allocators_) {
-      gpu_bfc->DumpSummaryMemoryLog();
-    }
-  }
-  BFCAllocator::DumpMemoryLog(num_bytes);
 }
 
 // GPUStreamAwareBFCWrapperAllocator
