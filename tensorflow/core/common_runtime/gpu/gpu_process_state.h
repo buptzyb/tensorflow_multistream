@@ -104,6 +104,15 @@ class GPUProcessState {
                             /*peer_gpu_ids=*/{}, num_allocators, allocators);
   }
 
+  void GetGPUStreamAwareAllocators(
+      const GPUOptions& options, tsl::TfDeviceId tf_device_id,
+      size_t total_bytes, const std::vector<tsl::TfDeviceId>& peer_gpu_ids,
+      size_t num_allocators, std::vector<Allocator*>& allocators);
+
+  virtual Allocator* GetGPUStreamAwareAllocator(
+      const GPUOptions& options, tsl::TfDeviceId tf_device_id,
+      size_t total_bytes, const std::vector<tsl::TfDeviceId>& peer_gpu_ids);
+
   int NumGPUAllocators() {
     mutex_lock l(mu_);
     return gpu_allocators_.size();
@@ -185,6 +194,14 @@ class GPUProcessState {
       gpu_host_alloc_visitors_ TF_GUARDED_BY(mu_);
   std::vector<std::vector<std::vector<SubAllocator::Visitor>>>
       gpu_host_free_visitors_ TF_GUARDED_BY(mu_);
+
+  std::vector<std::vector<std::unique_ptr<Allocator>>>
+      gpu_stream_aware_wrappers_ TF_GUARDED_BY(mu_);
+  std::vector<std::unique_ptr<Allocator>> gpu_stream_aware_allocators_
+      TF_GUARDED_BY(mu_);
+  // should be empty, just avoid conflicting with gpu_visitors_ if reuse that.
+  std::vector<std::vector<SubAllocator::Visitor>> gpu_stream_aware_visitors_
+      TF_GUARDED_BY(mu_);
 
   std::unordered_map<int, mutex> shared_pool_lock_ TF_GUARDED_BY(mu_);
   std::unordered_map<int, int64_t> shared_pool_bytes_ TF_GUARDED_BY(mu_);
